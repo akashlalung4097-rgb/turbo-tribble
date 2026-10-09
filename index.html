@@ -54,6 +54,63 @@ body:not(.reduce-motion) .panel h3{
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
 
+
+/* Smooth gallery loading: shimmer while media loads, then fade/zoom into place. */
+@keyframes pgCardEnter {
+  from { opacity: 0; transform: translateY(16px) scale(.985); filter: blur(3px); }
+  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+@keyframes pgMediaShimmer {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(110%); }
+}
+.photo-card {
+  animation: pgCardEnter .58s cubic-bezier(.2,.75,.25,1) backwards;
+  animation-delay: var(--card-delay, 0ms);
+  will-change: transform, opacity;
+}
+.photo-card .thumb {
+  isolation: isolate;
+  background: linear-gradient(135deg, var(--panel2), #0a1020 55%, var(--panel2));
+}
+.photo-card .thumb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 25%, #ffffff18 45%, #ffffff08 55%, transparent 75%);
+  transform: translateX(-110%);
+  animation: pgMediaShimmer 1.35s ease-in-out infinite;
+  transition: opacity .35s ease;
+}
+.photo-card .thumb.media-ready::before { opacity: 0; animation: none; }
+.photo-card .thumb > .badge,
+.photo-card .thumb > span:not(.gallery-media) { z-index: 3; }
+.photo-card .thumb img.gallery-media,
+.photo-card .thumb video.gallery-media {
+  position: relative;
+  z-index: 1;
+  opacity: 0;
+  transform: scale(1.025);
+  transition: opacity .55s ease, transform .8s cubic-bezier(.2,.7,.2,1);
+}
+.photo-card .thumb img.gallery-media.is-loaded,
+.photo-card .thumb video.gallery-media.is-loaded {
+  opacity: 1;
+  transform: scale(1);
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .photo-card:hover .thumb img.gallery-media.is-loaded { transform: scale(1.04); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .photo-card { opacity: 1; animation: none; will-change: auto; }
+  .photo-card .thumb::before { animation: none; display: none; }
+  .photo-card .thumb img.gallery-media,
+  .photo-card .thumb video.gallery-media { opacity: 1; transform: none; transition: none; }
+}
+
+#adminOpen{display:none}
 </style>
 </head>
 <body>
@@ -284,10 +341,25 @@ function renderGallery(cat='All',q='',mode='latest'){
   document.getElementById('photoGrid').innerHTML=arr.length?arr.map((p,i)=>{
     const liked=visitor.likes.includes(p.id);
     const media=p.mediaType==='video'
-      ? `<video loading="lazy" src="${p.src}" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover"></video><span class="badge" style="left:auto;right:10px">VIDEO</span>`
-      : `<img loading="lazy" src="${p.src}" alt="${esc(p.name)}">`;
-    return `<article class="photo-card"><div class="thumb">${media}<span class="badge">${esc(p.category)}</span>${p.featured?'<span class="badge" style="left:auto;right:10px">Featured</span>':''}${p.overlay?`<span style="position:absolute;left:50%;bottom:12px;transform:translateX(-50%);color:${esc(p.overlayColor||'#fff')};font-weight:800;background:#0008;padding:6px 12px;border-radius:999px;white-space:nowrap;max-width:90%;overflow:hidden;text-overflow:ellipsis">${esc(p.overlay)}</span>`:''}</div><div class="photo-info"><div class="photo-title">${esc(p.name)}</div><div class="photo-meta"><span>♥ ${p.likes||0}</span><span>👁 ${p.views||0}</span><span>${esc(p.category)}</span></div><div class="card-actions"><button class="${liked?'liked':''}" data-act="like" data-id="${p.id}">${liked?'♥':'♡'} Like</button><button data-act="share" data-id="${p.id}">↗</button><button data-act="comment" data-id="${p.id}">💬 Comment</button></div></div></article>`
+      ? `<video class="gallery-media" loading="lazy" src="${p.src}" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover"></video><span class="badge" style="left:auto;right:10px">VIDEO</span>`
+      : `<img class="gallery-media" loading="lazy" src="${p.src}" alt="${esc(p.name)}">`;
+    return `<article class="photo-card" style="--card-delay:${Math.min(i,12)*45}ms"><div class="thumb">${media}<span class="badge">${esc(p.category)}</span>${p.featured?'<span class="badge" style="left:auto;right:10px">Featured</span>':''}${p.overlay?`<span style="position:absolute;left:50%;bottom:12px;transform:translateX(-50%);color:${esc(p.overlayColor||'#fff')};font-weight:800;background:#0008;padding:6px 12px;border-radius:999px;white-space:nowrap;max-width:90%;overflow:hidden;text-overflow:ellipsis">${esc(p.overlay)}</span>`:''}</div><div class="photo-info"><div class="photo-title">${esc(p.name)}</div><div class="photo-meta"><span>♥ ${p.likes||0}</span><span>👁 ${p.views||0}</span><span>${esc(p.category)}</span></div><div class="card-actions"><button class="${liked?'liked':''}" data-act="like" data-id="${p.id}">${liked?'♥':'♡'} Like</button><button data-act="share" data-id="${p.id}">↗</button><button data-act="comment" data-id="${p.id}">💬 Comment</button></div></div></article>`
   }).join(''):'<div class="empty" style="grid-column:1/-1">No photos found. Try another name, category or hashtag.</div>';
+  // Reveal each photo/video only after it has loaded; keep the shimmer for slow media.
+  document.querySelectorAll('#photoGrid .gallery-media').forEach(media=>{
+    const ready=()=>{
+      media.classList.add('is-loaded');
+      media.closest('.thumb')?.classList.add('media-ready');
+    };
+    if(media.tagName==='VIDEO'){
+      ['loadedmetadata','loadeddata','error'].forEach(ev=>media.addEventListener(ev,ready,{once:true}));
+      if(media.readyState>=1)ready();
+    }else{
+      media.addEventListener('load',ready,{once:true});
+      media.addEventListener('error',ready,{once:true});
+      if(media.complete)ready();
+    }
+  });
   document.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
     const p=photos.find(x=>x.id===b.dataset.id);if(!p)return;
     if(b.dataset.act==='like')toggleLike(p);
@@ -447,7 +519,7 @@ function renderUsersTraffic(){
 }
 function updateStats(){document.getElementById('sPhotos').textContent=photos.length;document.getElementById('sViews').textContent=photos.reduce((a,p)=>a+(p.views||0),0);document.getElementById('sLikes').textContent=photos.reduce((a,p)=>a+(p.likes||0),0);document.getElementById('sDownloads').textContent=photos.reduce((a,p)=>a+(p.downloads||0),0);document.getElementById('sReports').textContent=(data.reports||[]).length;document.getElementById('trafficSummary').textContent='Photo views: '+(data.traffic?.views||0)+' · Page views: '+(data.traffic?.pageViews||0)+' · Local visitors: '+(data.traffic?.uniqueVisitors||0);
 const de=estimatedEarnings(); const cur=data.earnings?.currency||'₹'; document.getElementById('dashboardEarnings').innerHTML='<b style="font-size:26px">'+cur+de.total.toFixed(2)+'</b><div style="color:var(--muted);margin-top:6px">Estimated from '+Math.round(de.impressions).toLocaleString()+' impressions</div>';}
-function setupPublic(){document.getElementById('searchBtn').onclick=()=>renderGallery('All',document.getElementById('searchInput').value,'latest');document.getElementById('searchInput').oninput=e=>renderGallery(document.querySelector('.chip.active')?.dataset.cat||'All',e.target.value,document.querySelector('.chip.active')?.dataset.mode||'latest');document.getElementById('heroSearch').onclick=()=>{document.getElementById('searchInput').focus();location.hash='explore'};document.getElementById('mobileSearch').onclick=()=>{location.hash='explore';setTimeout(()=>document.getElementById('searchInput').focus(),100)};document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>location.hash=b.dataset.nav);document.getElementById('themeBtn').onclick=()=>{document.body.classList.toggle('light');localStorage.setItem('pg_theme',document.body.classList.contains('light')?'light':'dark')};if(localStorage.getItem('pg_theme')==='light')document.body.classList.add('light');document.getElementById('closePhoto').onclick=closePhoto;document.getElementById('photoModal').onclick=e=>{if(e.target.id==='photoModal')closePhoto()};document.getElementById('prevPhoto').onclick=()=>{currentIndex=(currentIndex-1+currentList.length)%currentList.length;showModal()};document.getElementById('nextPhoto').onclick=()=>{currentIndex=(currentIndex+1)%currentList.length;showModal()};document.getElementById('zoomIn').onclick=()=>{zoom=Math.min(3,zoom+.25);applyZoom()};document.getElementById('zoomOut').onclick=()=>{zoom=Math.max(.5,zoom-.25);applyZoom()};document.getElementById('zoomReset').onclick=()=>{zoom=1;applyZoom()};document.getElementById('modalLike').onclick=()=>toggleLike(currentList[currentIndex]);document.getElementById('modalShare').onclick=()=>document.getElementById('shareMenu').classList.toggle('hidden');document.getElementById('modalCopy').onclick=()=>{navigator.clipboard?.writeText(location.href.split('#')[0]+'#photo='+encodeURIComponent(currentList[currentIndex].id));toast('Link copied!')};document.getElementById('modalDownload').onclick=downloadPhoto;document.getElementById('modalReport').onclick=reportCurrent;document.getElementById('commentName').value=visitor.userName||'Anonymous';document.getElementById('commentName').onchange=e=>{visitor.userName=e.target.value.trim().slice(0,40)||'Anonymous';saveVisitor()};document.getElementById('commentSend').onclick=addComment;document.getElementById('commentInput').onkeydown=e=>{if(e.key==='Enter')addComment()};document.getElementById('adminOpen').onclick=()=>document.getElementById('login').classList.add('open');document.getElementById('loginCancel').onclick=()=>document.getElementById('login').classList.remove('open');document.getElementById('loginSubmit').onclick=login;document.getElementById('adminPass').onkeydown=e=>{if(e.key==='Enter')login()};document.getElementById('showPassword').onclick=()=>{const i=document.getElementById('adminPass');const b=document.getElementById('showPassword');const show=i.type==='password';i.type=show?'text':'password';b.textContent=show?'Hide':'Show'};document.addEventListener('keydown',e=>{if(e.key==='Escape'){closePhoto();document.getElementById('login').classList.remove('open')}})}
+function setupPublic(){document.getElementById('searchBtn').onclick=()=>renderGallery('All',document.getElementById('searchInput').value,'latest');document.getElementById('searchInput').oninput=e=>renderGallery(document.querySelector('.chip.active')?.dataset.cat||'All',e.target.value,document.querySelector('.chip.active')?.dataset.mode||'latest');document.getElementById('heroSearch').onclick=()=>{document.getElementById('searchInput').focus();location.hash='explore'};document.getElementById('mobileSearch').onclick=()=>{location.hash='explore';setTimeout(()=>document.getElementById('searchInput').focus(),100)};document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>location.hash=b.dataset.nav);document.getElementById('themeBtn').onclick=()=>{document.body.classList.toggle('light');localStorage.setItem('pg_theme',document.body.classList.contains('light')?'light':'dark')};if(localStorage.getItem('pg_theme')==='light')document.body.classList.add('light');document.getElementById('closePhoto').onclick=closePhoto;document.getElementById('photoModal').onclick=e=>{if(e.target.id==='photoModal')closePhoto()};document.getElementById('prevPhoto').onclick=()=>{currentIndex=(currentIndex-1+currentList.length)%currentList.length;showModal()};document.getElementById('nextPhoto').onclick=()=>{currentIndex=(currentIndex+1)%currentList.length;showModal()};document.getElementById('zoomIn').onclick=()=>{zoom=Math.min(3,zoom+.25);applyZoom()};document.getElementById('zoomOut').onclick=()=>{zoom=Math.max(.5,zoom-.25);applyZoom()};document.getElementById('zoomReset').onclick=()=>{zoom=1;applyZoom()};document.getElementById('modalLike').onclick=()=>toggleLike(currentList[currentIndex]);document.getElementById('modalShare').onclick=()=>document.getElementById('shareMenu').classList.toggle('hidden');document.getElementById('modalCopy').onclick=()=>{navigator.clipboard?.writeText(location.href.split('#')[0]+'#photo='+encodeURIComponent(currentList[currentIndex].id));toast('Link copied!')};document.getElementById('modalDownload').onclick=downloadPhoto;document.getElementById('modalReport').onclick=reportCurrent;document.getElementById('commentName').value=visitor.userName||'Anonymous';document.getElementById('commentName').onchange=e=>{visitor.userName=e.target.value.trim().slice(0,40)||'Anonymous';saveVisitor()};document.getElementById('commentSend').onclick=addComment;document.getElementById('commentInput').onkeydown=e=>{if(e.key==='Enter')addComment()};const adminBtn=document.getElementById('adminOpen');const updateOwnerAdminVisibility=()=>{adminBtn.style.display=location.hash.toLowerCase()==='#owner'?'inline-block':'none'};updateOwnerAdminVisibility();window.addEventListener('hashchange',updateOwnerAdminVisibility);adminBtn.onclick=()=>document.getElementById('login').classList.add('open');document.getElementById('loginCancel').onclick=()=>document.getElementById('login').classList.remove('open');document.getElementById('loginSubmit').onclick=login;document.getElementById('adminPass').onkeydown=e=>{if(e.key==='Enter')login()};document.getElementById('showPassword').onclick=()=>{const i=document.getElementById('adminPass');const b=document.getElementById('showPassword');const show=i.type==='password';i.type=show?'text':'password';b.textContent=show?'Hide':'Show'};document.addEventListener('keydown',e=>{if(e.key==='Escape'){closePhoto();document.getElementById('login').classList.remove('open')}})}
 async function login(){
   const u=document.getElementById('adminUser').value.trim();
   const p=document.getElementById('adminPass').value;
